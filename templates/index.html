@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelOps SIEM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.5.1/socket.io.min.js"></script>
+    <style>
+        :root { --bg:#08111f; --panel:rgba(10,20,37,.82); --panel-strong:rgba(9,17,31,.96); --border:rgba(148,163,184,.16); --text:#e2e8f0; --muted:#8aa1bd; --bg-image:radial-gradient(circle at top left, rgba(61,217,235,.18), transparent 32%), radial-gradient(circle at top right, rgba(52,211,153,.16), transparent 26%), linear-gradient(180deg, #07111f 0%, #0c1527 42%, #060d18 100%); }
+        body[data-theme="light"] { --bg:#edf4fb; --panel:rgba(255,255,255,.82); --panel-strong:rgba(255,255,255,.96); --border:rgba(15,23,42,.10); --text:#0f172a; --muted:#4b5563; --bg-image:radial-gradient(circle at top left, rgba(14,165,233,.12), transparent 28%), radial-gradient(circle at top right, rgba(16,185,129,.14), transparent 24%), linear-gradient(180deg, #eef6ff 0%, #e8f0fa 45%, #f6f8fc 100%); }
+        body { font-family:"Space Grotesk",sans-serif; background:var(--bg-image); color:var(--text); min-height:100vh; transition:background .25s ease,color .25s ease; }
+        .mono { font-family:"IBM Plex Mono",monospace; }
+        .glass { background:var(--panel); border:1px solid var(--border); box-shadow:0 22px 60px rgba(0,0,0,.28); backdrop-filter:blur(16px); }
+        .glass-strong { background:var(--panel-strong); border:1px solid var(--border); box-shadow:0 26px 80px rgba(0,0,0,.34); backdrop-filter:blur(18px); }
+        .status-dot { width:10px; height:10px; border-radius:999px; display:inline-block; }
+        .table-shell { max-height:420px; overflow:auto; }
+        .chat-message { border:1px solid rgba(148,163,184,.12); background:rgba(15,23,42,.55); }
+        .chat-message.user { background:rgba(8,145,178,.16); border-color:rgba(61,217,235,.22); }
+        .pulse { animation:pulse 1.8s infinite; }
+        .theme-input { border:1px solid rgba(148,163,184,.18); background:rgba(255,255,255,.04); color:inherit; }
+        body[data-theme="light"] .theme-input { background:rgba(255,255,255,.72); }
+        body[data-theme="light"] .chat-message { background:rgba(241,245,249,.95); border-color:rgba(148,163,184,.25); }
+        body[data-theme="light"] .chat-message.user { background:rgba(186,230,253,.55); }
+        body[data-theme="light"] .text-slate-50,
+        body[data-theme="light"] .text-slate-100,
+        body[data-theme="light"] .text-slate-200,
+        body[data-theme="light"] .text-slate-300 { color:#0f172a !important; }
+        body[data-theme="light"] .text-slate-400 { color:#475569 !important; }
+        body[data-theme="light"] .text-slate-500 { color:#64748b !important; }
+        body[data-theme="light"] .bg-white\/5 { background:rgba(255,255,255,.72) !important; }
+        body[data-theme="light"] .bg-slate-950\/35,
+        body[data-theme="light"] .bg-slate-950\/40,
+        body[data-theme="light"] .bg-slate-950\/95 { background:rgba(255,255,255,.88) !important; }
+        @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(52,211,153,.4);} 70% { box-shadow:0 0 0 10px rgba(52,211,153,0);} 100% { box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+        .chart-container { position:relative; width:100%; height:180px; }
+    </style>
+</head>
+<body data-theme="dark">
+    <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <header class="glass-strong rounded-[28px] px-6 py-6 sm:px-8">
+            <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div class="max-w-3xl">
+                    <div class="mb-4 flex flex-wrap items-center gap-3 text-sm">
+                        <span class="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-cyan-200">AI-Driven Security Console</span>
+                        <span id="socket-status-text" class="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 text-emerald-200 mono"><span id="socket-status-dot" class="status-dot pulse mr-2 bg-emerald-400"></span>Live stream connected</span>
+                    </div>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-50 sm:text-5xl">SentinelOps realtime SIEM dashboard</h1>
+                    <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">Monitor host performance, inspect suspicious traffic, and collaborate with the AI operator from one surface built for fast triage.</p>
+                </div>
+                <div class="flex flex-col gap-3">
+                    <button id="theme-toggle" class="self-end rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Switch to light</button>
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div class="text-xs uppercase tracking-[0.2em] text-slate-400">Mode</div><div class="mt-2 text-lg font-semibold text-slate-100">Realtime</div></div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div class="text-xs uppercase tracking-[0.2em] text-slate-400">Telemetry</div><div id="telemetry-status" class="mt-2 text-lg font-semibold text-emerald-300">Healthy</div></div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div class="text-xs uppercase tracking-[0.2em] text-slate-400">Last sync</div><div id="last-sync" class="mt-2 text-lg font-semibold text-slate-100 mono">--:--:--</div></div>
+                    <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div class="text-xs uppercase tracking-[0.2em] text-slate-400">Threat state</div><div id="threat-state" class="mt-2 text-lg font-semibold text-cyan-300">Observing</div></div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <section class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">CPU load</div><div class="mt-4 flex items-end justify-between"><div><div id="cpu-stat" class="mono text-4xl font-semibold text-slate-50">0%</div><div class="mt-2 text-sm text-slate-400">Live system compute pressure</div></div><div id="cpu-badge" class="rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-medium text-emerald-300">Normal</div></div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Memory usage</div><div class="mt-4 flex items-end justify-between"><div><div id="memory-stat" class="mono text-4xl font-semibold text-slate-50">0%</div><div id="memory-total" class="mt-2 text-sm text-slate-400">Capacity unknown</div></div><div id="memory-badge" class="rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-medium text-emerald-300">Stable</div></div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Disk usage</div><div class="mt-4 flex items-end justify-between"><div><div id="disk-stat" class="mono text-4xl font-semibold text-slate-50">0%</div><div id="disk-total" class="mt-2 text-sm text-slate-400">Storage baseline pending</div></div><div id="disk-badge" class="rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-medium text-emerald-300">Stable</div></div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Activity window</div><div class="mt-4 flex items-end justify-between"><div><div id="packet-stat" class="mono text-4xl font-semibold text-slate-50">0</div><div class="mt-2 text-sm text-slate-400">Visible network rows this page</div></div><div id="log-stat" class="rounded-full bg-cyan-400/15 px-3 py-1 text-xs font-medium text-cyan-300">0 logs loaded</div></div></article>
+        </section>
+
+        <section class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Critical alerts</div><div id="critical-alerts" class="mono mt-4 text-4xl font-semibold text-rose-300">0</div><div class="mt-2 text-sm text-slate-400">Highest priority events in recent windows</div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Warning alerts</div><div id="warning-alerts" class="mono mt-4 text-4xl font-semibold text-amber-300">0</div><div class="mt-2 text-sm text-slate-400">Conditions that need investigation</div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Info alerts</div><div id="info-alerts" class="mono mt-4 text-4xl font-semibold text-cyan-300">0</div><div class="mt-2 text-sm text-slate-400">Routine telemetry and baseline events</div></article>
+            <article class="glass rounded-[24px] p-5"><div class="text-xs uppercase tracking-[0.22em] text-slate-400">Resource state</div><div id="resource-state" class="mt-4 text-3xl font-semibold text-emerald-300">Normal</div><div id="resource-breakdown" class="mt-2 text-sm text-slate-400">CPU normal, memory normal, disk normal</div></article>
+        </section>
+
+        <section class="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.95fr]">
+            <div class="space-y-6">
+                <div class="glass rounded-[28px] p-6">
+                    <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <h2 class="text-2xl font-semibold text-slate-50">System telemetry</h2>
+                            <p class="mt-1 text-sm text-slate-400">Realtime performance curves plus compact infrastructure facts for quick health checks.</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                            <div class="rounded-2xl bg-white/5 px-4 py-3"><div class="text-slate-400">CPU freq</div><div id="cpu-frequency" class="mono mt-1 text-slate-100">--</div></div>
+                            <div class="rounded-2xl bg-white/5 px-4 py-3"><div class="text-slate-400">CPU cores</div><div id="cpu-cores" class="mono mt-1 text-slate-100">--</div></div>
+                            <div class="rounded-2xl bg-white/5 px-4 py-3"><div class="text-slate-400">GPU load</div><div id="gpu-usage" class="mono mt-1 text-slate-100">--</div></div>
+                            <div class="rounded-2xl bg-white/5 px-4 py-3"><div class="text-slate-400">Power</div><div id="power-usage" class="mono mt-1 text-slate-100">--</div></div>
+                        </div>
+                    </div>
+                    <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr]">
+                        <div class="space-y-6">
+                            <div class="rounded-[24px] border border-white/10 bg-slate-950/40 p-4">
+                                <div class="mb-3 flex items-center justify-between"><div><div class="text-sm font-medium text-slate-200">CPU history</div><div class="text-xs text-slate-500">Latest 15 samples</div></div><span class="rounded-full bg-cyan-400/10 px-3 py-1 text-xs text-cyan-300">Live chart</span></div>
+                                <div class="chart-container"><canvas id="cpuChart"></canvas></div>
+                            </div>
+                            <div class="rounded-[24px] border border-white/10 bg-slate-950/40 p-4">
+                                <div class="mb-3 flex items-center justify-between"><div><div class="text-sm font-medium text-slate-200">Network traffic</div><div class="text-xs text-slate-500">Realtime throughput (KB/s)</div></div><div class="flex gap-3"><span id="net-sent-label" class="mono rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-300">↑ 0 KB/s</span><span id="net-recv-label" class="mono rounded-full bg-violet-400/10 px-3 py-1 text-xs text-violet-300">↓ 0 KB/s</span></div></div>
+                                <div class="chart-container"><canvas id="networkTrafficChart"></canvas></div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-1">
+                            <div class="rounded-[24px] border border-white/10 bg-slate-950/40 p-4"><div class="mb-3 flex items-center justify-between"><div class="text-sm font-medium text-slate-200">Memory split</div><span id="memory-inline-label" class="mono text-xs text-slate-500">0% used</span></div><div class="mx-auto max-w-[220px]"><canvas id="memoryChart" height="220"></canvas></div></div>
+                            <div class="rounded-[24px] border border-white/10 bg-slate-950/40 p-4"><div class="mb-3 flex items-center justify-between"><div class="text-sm font-medium text-slate-200">Disk split</div><span id="disk-inline-label" class="mono text-xs text-slate-500">0% used</span></div><div class="mx-auto max-w-[220px]"><canvas id="diskChart" height="220"></canvas></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass rounded-[28px] p-6">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div><h2 class="text-2xl font-semibold text-slate-50">Network intelligence</h2><p class="mt-1 text-sm text-slate-400">Paginated flow visibility with blacklist indicators and rapid anomaly scanning.</p></div>
+                        <div class="flex items-center gap-3"><span class="rounded-full border border-rose-400/25 bg-rose-400/10 px-3 py-1 text-xs text-rose-200">Blacklist monitor active</span><span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 mono">Page <span id="network-page-label">1</span></span></div>
+                    </div>
+                    <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <input id="network-query" class="theme-input rounded-2xl px-4 py-3 text-sm outline-none" placeholder="Filter by IP, origin, or summary">
+                        <select id="network-blacklisted" class="theme-input rounded-2xl px-4 py-3 text-sm outline-none">
+                            <option value="">All blacklist states</option>
+                            <option value="yes">Blacklisted only</option>
+                            <option value="no">Not blacklisted</option>
+                        </select>
+                        <select id="network-severity" class="theme-input rounded-2xl px-4 py-3 text-sm outline-none">
+                            <option value="">All severities</option>
+                            <option value="critical">Critical</option>
+                            <option value="warning">Warning</option>
+                            <option value="info">Info</option>
+                        </select>
+                    </div>
+                    <div class="table-shell mt-5 rounded-[22px] border border-white/10 bg-slate-950/35">
+                        <table class="min-w-full text-left text-sm">
+                            <thead class="sticky top-0 bg-slate-950/95 text-slate-300 backdrop-blur"><tr><th class="px-4 py-3 font-medium">IP address</th><th class="px-4 py-3 font-medium">Origin</th><th class="px-4 py-3 font-medium">Details</th><th class="px-4 py-3 font-medium">Blacklist</th><th class="px-4 py-3 font-medium">Attacks</th><th class="px-4 py-3 font-medium">Severity</th></tr></thead>
+                            <tbody id="network-requests" class="divide-y divide-white/5 text-slate-200"></tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between"><button id="network-prev" class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Previous</button><button id="network-next" class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Next</button></div>
+                </div>
+
+                <div class="glass rounded-[28px] p-6">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div><h2 class="text-2xl font-semibold text-slate-50">System logs</h2><p class="mt-1 text-sm text-slate-400">Recent operator and backend events, refreshed automatically for triage continuity.</p></div>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 mono">Page <span id="logs-page-label">1</span></span>
+                    </div>
+                    <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <input id="logs-query" class="theme-input rounded-2xl px-4 py-3 text-sm outline-none" placeholder="Search logs by message">
+                        <select id="logs-severity" class="theme-input rounded-2xl px-4 py-3 text-sm outline-none">
+                            <option value="">All severities</option>
+                            <option value="critical">Critical</option>
+                            <option value="warning">Warning</option>
+                            <option value="info">Info</option>
+                        </select>
+                    </div>
+                    <div class="table-shell mt-5 rounded-[22px] border border-white/10 bg-slate-950/35">
+                        <table class="min-w-full text-left text-sm">
+                            <thead class="sticky top-0 bg-slate-950/95 text-slate-300 backdrop-blur"><tr><th class="px-4 py-3 font-medium">Time</th><th class="px-4 py-3 font-medium">Log entry</th><th class="px-4 py-3 font-medium">Severity</th></tr></thead>
+                            <tbody id="log-list" class="divide-y divide-white/5 text-slate-200"></tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between"><button id="logs-prev" class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Previous</button><button id="logs-next" class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Next</button></div>
+                </div>
+            </div>
+
+            <aside class="space-y-6">
+                <div class="glass rounded-[28px] p-6">
+                    <div class="flex items-center justify-between">
+                        <div><h2 class="text-2xl font-semibold text-slate-50">AI operator</h2><p class="mt-1 text-sm text-slate-400">Query the assistant with live system context attached automatically.</p></div>
+                        <span id="chat-status" class="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs text-cyan-200">Context aware</span>
+                    </div>
+                    <div id="chat-box" class="mt-5 flex h-[460px] flex-col gap-3 overflow-y-auto rounded-[22px] border border-white/10 bg-slate-950/40 p-4">
+                        <div class="chat-message rounded-2xl px-4 py-3 text-sm text-slate-300">AI operator ready. Ask about system load, suspicious activity, or recent telemetry trends.</div>
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <button class="chat-prompt rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-400/30 hover:bg-cyan-400/10" data-prompt="Summarize the current system status.">System summary</button>
+                        <button class="chat-prompt rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-400/30 hover:bg-cyan-400/10" data-prompt="Do you see any suspicious network activity right now?">Network review</button>
+                        <button class="chat-prompt rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-400/30 hover:bg-cyan-400/10" data-prompt="Summarize the latest alerts and logs.">Alerts recap</button>
+                    </div>
+                    <div class="mt-4 flex gap-3">
+                        <input id="chat-input" type="text" class="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/35 focus:bg-cyan-400/5" placeholder="Ask the operator to summarize the latest activity...">
+                        <button id="chat-send" class="rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-medium text-slate-950 transition hover:bg-cyan-300">Send</button>
+                        <button id="chat-clear" class="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-medium text-slate-100 transition hover:border-cyan-400/30 hover:bg-cyan-400/10">Clear</button>
+                    </div>
+                </div>
+
+                <div class="glass rounded-[28px] p-6">
+                    <div class="flex items-center justify-between">
+                        <div><h2 class="text-xl font-semibold text-slate-50">Infrastructure profile</h2><p class="mt-1 text-sm text-slate-400">Compact hardware and runtime context.</p></div>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">Snapshot</span>
+                    </div>
+                    <dl class="mt-5 space-y-3 text-sm">
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">CPU frequency</dt><dd id="info-cpu-frequency" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">CPU cores</dt><dd id="info-cpu-cores" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">GPU usage</dt><dd id="info-gpu-usage" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">GPU memory</dt><dd id="info-gpu-memory" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">Battery / power</dt><dd id="info-power-usage" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">Total memory</dt><dd id="info-memory-total" class="mono text-slate-100">--</dd></div>
+                        <div class="flex items-center justify-between rounded-2xl bg-white/5 px-4 py-3"><dt class="text-slate-400">Total disk</dt><dd id="info-disk-total" class="mono text-slate-100">--</dd></div>
+                    </dl>
+                </div>
+            </aside>
+        </section>
+    </div>
+
+    <script>
+        const cpuChartCtx = document.getElementById('cpuChart').getContext('2d');
+        const memoryChartCtx = document.getElementById('memoryChart').getContext('2d');
+        const diskChartCtx = document.getElementById('diskChart').getContext('2d');
+        const netTrafficCtx = document.getElementById('networkTrafficChart').getContext('2d');
+        const socket = io();
+        const chatStatus = document.getElementById('chat-status');
+        const chatSendButton = document.getElementById('chat-send');
+        const chatInput = document.getElementById('chat-input');
+        let currentNetworkPage = 1;
+        let currentLogsPage = 1;
+
+        const cpuChart = new Chart(cpuChartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'CPU Usage (%)',
+                    data: [],
+                    borderColor: '#3dd9eb',
+                    backgroundColor: 'rgba(61, 217, 235, 0.15)',
+                    fill: true,
+                    borderWidth: 2.5,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#3dd9eb',
+                    pointBorderColor: '#0d1b2a',
+                    pointBorderWidth: 1.5,
+                    pointHoverRadius: 5,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 400 },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(8,17,31,0.92)',
+                        titleColor: '#94a3b8',
+                        bodyColor: '#e2e8f0',
+                        borderColor: 'rgba(61,217,235,0.3)',
+                        borderWidth: 1,
+                        padding: 10,
+                        displayColors: false,
+                        callbacks: { label(ctx) { return `CPU: ${ctx.parsed.y.toFixed(1)}%`; } }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#8aa1bd', maxTicksLimit: 6, font: { size: 10 } },
+                        grid: { color: 'rgba(148, 163, 184, 0.06)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { color: '#8aa1bd', stepSize: 25, font: { size: 10 }, callback: v => v + '%' },
+                        grid: { color: 'rgba(148, 163, 184, 0.08)' }
+                    }
+                }
+            }
+        });
+
+        const doughnutBaseOptions = {
+            responsive: true,
+            maintainAspectRatio: true,
+            cutout: '72%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true } },
+                tooltip: { callbacks: { label(context) { return `${context.label}: ${context.raw}%`; } } }
+            }
+        };
+
+        const memoryChart = new Chart(memoryChartCtx, {
+            type: 'doughnut',
+            data: { labels: ['Used', 'Available'], datasets: [{ data: [0, 100], backgroundColor: ['#3dd9eb', 'rgba(148, 163, 184, 0.22)'], borderWidth: 0 }] },
+            options: doughnutBaseOptions
+        });
+
+        const diskChart = new Chart(diskChartCtx, {
+            type: 'doughnut',
+            data: { labels: ['Used', 'Available'], datasets: [{ data: [0, 100], backgroundColor: ['#fb7185', 'rgba(148, 163, 184, 0.22)'], borderWidth: 0 }] },
+            options: doughnutBaseOptions
+        });
+
+        const networkTrafficChart = new Chart(netTrafficCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Upload (KB/s)',
+                        data: [],
+                        borderColor: '#34d399',
+                        backgroundColor: 'rgba(52, 211, 153, 0.10)',
+                        fill: true,
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#34d399',
+                        pointBorderColor: '#0d1b2a',
+                        pointBorderWidth: 1.5,
+                        pointHoverRadius: 5,
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Download (KB/s)',
+                        data: [],
+                        borderColor: '#a78bfa',
+                        backgroundColor: 'rgba(167, 139, 250, 0.10)',
+                        fill: true,
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#a78bfa',
+                        pointBorderColor: '#0d1b2a',
+                        pointBorderWidth: 1.5,
+                        pointHoverRadius: 5,
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 400 },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { color: '#cbd5e1', boxWidth: 10, usePointStyle: true, padding: 12, font: { size: 11 } }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(8,17,31,0.92)',
+                        titleColor: '#94a3b8',
+                        bodyColor: '#e2e8f0',
+                        borderColor: 'rgba(167,139,250,0.3)',
+                        borderWidth: 1,
+                        padding: 10,
+                        callbacks: { label(ctx) { return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} KB/s`; } }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#8aa1bd', maxTicksLimit: 6, font: { size: 10 } },
+                        grid: { color: 'rgba(148, 163, 184, 0.06)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#8aa1bd', font: { size: 10 }, callback: v => v.toFixed(1) },
+                        grid: { color: 'rgba(148, 163, 184, 0.08)' }
+                    }
+                }
+            }
+        });
+
+        function formatBytes(bytes) {
+            if (!bytes && bytes !== 0) return '--';
+            return `${(bytes / (1024 ** 3)).toFixed(2)} GB`;
+        }
+
+        function formatRate(bytesPerSec) {
+            if (bytesPerSec >= 1048576) return `${(bytesPerSec / 1048576).toFixed(1)} MB/s`;
+            return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+        }
+
+        function severityBadge(severity) {
+            if (severity === 'critical') return 'bg-rose-400/15 text-rose-300';
+            if (severity === 'warning') return 'bg-amber-400/15 text-amber-300';
+            return 'bg-cyan-400/15 text-cyan-300';
+        }
+
+        function titleCase(value) {
+            return (value || '').charAt(0).toUpperCase() + (value || '').slice(1);
+        }
+
+        function getSeverityMeta(value) {
+            if (value >= 90) return { label: 'Critical', className: 'bg-rose-400/15 text-rose-300' };
+            if (value >= 75) return { label: 'Elevated', className: 'bg-amber-400/15 text-amber-300' };
+            return { label: 'Normal', className: 'bg-emerald-400/15 text-emerald-300' };
+        }
+
+        function buildQueryString(params) {
+            const query = new URLSearchParams();
+            Object.entries(params).forEach(([key, value]) => {
+                if (value !== undefined && value !== null && value !== '') query.set(key, value);
+            });
+            const stringValue = query.toString();
+            return stringValue ? `?${stringValue}` : '';
+        }
+
+        function setTheme(theme) {
+            document.body.setAttribute('data-theme', theme);
+            localStorage.setItem('siem-theme', theme);
+            document.getElementById('theme-toggle').textContent = theme === 'dark' ? 'Switch to light' : 'Switch to dark';
+        }
+
+        function renderAlertSummary(summary) {
+            if (!summary) return;
+            document.getElementById('critical-alerts').textContent = summary.totals?.critical ?? 0;
+            document.getElementById('warning-alerts').textContent = summary.totals?.warning ?? 0;
+            document.getElementById('info-alerts').textContent = summary.totals?.info ?? 0;
+
+            const resourceState = titleCase(summary.resource_state || 'normal');
+            const stateClass = summary.resource_state === 'critical'
+                ? 'mt-4 text-3xl font-semibold text-rose-300'
+                : summary.resource_state === 'warning'
+                    ? 'mt-4 text-3xl font-semibold text-amber-300'
+                    : 'mt-4 text-3xl font-semibold text-emerald-300';
+
+            const resourceStateEl = document.getElementById('resource-state');
+            resourceStateEl.textContent = resourceState;
+            resourceStateEl.className = stateClass;
+
+            const breakdown = summary.resource_alerts || {};
+            document.getElementById('resource-breakdown').textContent =
+                `CPU ${breakdown.cpu || 'normal'}, memory ${breakdown.memory || 'normal'}, disk ${breakdown.disk || 'normal'}`;
+        }
+
+        function updateBadge(elementId, value) {
+            const el = document.getElementById(elementId);
+            const meta = getSeverityMeta(value);
+            el.textContent = meta.label;
+            el.className = `rounded-full px-3 py-1 text-xs font-medium ${meta.className}`;
+        }
+
+        function updateOperationalState(cpu, memory, disk) {
+            const maxLoad = Math.max(cpu, memory, disk);
+            const telemetryStatus = document.getElementById('telemetry-status');
+            const threatState = document.getElementById('threat-state');
+
+            if (maxLoad >= 90) {
+                telemetryStatus.textContent = 'Critical';
+                telemetryStatus.className = 'mt-2 text-lg font-semibold text-rose-300';
+                threatState.textContent = 'Escalate';
+                threatState.className = 'mt-2 text-lg font-semibold text-rose-300';
+            } else if (maxLoad >= 75) {
+                telemetryStatus.textContent = 'Elevated';
+                telemetryStatus.className = 'mt-2 text-lg font-semibold text-amber-300';
+                threatState.textContent = 'Investigate';
+                threatState.className = 'mt-2 text-lg font-semibold text-amber-300';
+            } else {
+                telemetryStatus.textContent = 'Healthy';
+                telemetryStatus.className = 'mt-2 text-lg font-semibold text-emerald-300';
+                threatState.textContent = 'Observing';
+                threatState.className = 'mt-2 text-lg font-semibold text-cyan-300';
+            }
+        }
+
+        function stampSyncTime() {
+            document.getElementById('last-sync').textContent = new Date().toLocaleTimeString();
+        }
+
+        function updateCharts(cpu, memory, disk) {
+            cpu = parseFloat(cpu) || 0;
+            memory = parseFloat(memory) || 0;
+            disk = parseFloat(disk) || 0;
+            const timeLabel = new Date().toLocaleTimeString();
+            cpuChart.data.labels.push(timeLabel);
+            cpuChart.data.datasets[0].data.push(cpu);
+            if (cpuChart.data.labels.length > 15) cpuChart.data.labels.shift();
+            if (cpuChart.data.datasets[0].data.length > 15) cpuChart.data.datasets[0].data.shift();
+            cpuChart.update('none');
+
+            memoryChart.data.datasets[0].data = [memory, Math.max(0, 100 - memory)];
+            memoryChart.update();
+            diskChart.data.datasets[0].data = [disk, Math.max(0, 100 - disk)];
+            diskChart.update();
+
+            document.getElementById('cpu-stat').textContent = `${cpu.toFixed(1)}%`;
+            document.getElementById('memory-stat').textContent = `${memory.toFixed(1)}%`;
+            document.getElementById('disk-stat').textContent = `${disk.toFixed(1)}%`;
+            document.getElementById('memory-inline-label').textContent = `${memory.toFixed(1)}% used`;
+            document.getElementById('disk-inline-label').textContent = `${disk.toFixed(1)}% used`;
+
+            updateBadge('cpu-badge', cpu);
+            updateBadge('memory-badge', memory);
+            updateBadge('disk-badge', disk);
+            updateOperationalState(cpu, memory, disk);
+            stampSyncTime();
+        }
+
+        function updateSystemInfo(data) {
+            document.getElementById('cpu-frequency').textContent = data.cpu_frequency === 'N/A' ? 'N/A' : `${Number(data.cpu_frequency).toFixed(0)} MHz`;
+            document.getElementById('cpu-cores').textContent = data.cpu_cores ?? '--';
+            document.getElementById('gpu-usage').textContent = data.gpu_usage ?? 'N/A';
+            document.getElementById('power-usage').textContent = data.power_usage === 'N/A' ? 'N/A' : `${data.power_usage}%`;
+            document.getElementById('info-cpu-frequency').textContent = document.getElementById('cpu-frequency').textContent;
+            document.getElementById('info-cpu-cores').textContent = data.cpu_cores ?? '--';
+            document.getElementById('info-gpu-usage').textContent = data.gpu_usage ?? 'N/A';
+            document.getElementById('info-gpu-memory').textContent = `${data.gpu_memory_used ?? 'N/A'} / ${data.gpu_memory_total ?? 'N/A'}`;
+            document.getElementById('info-power-usage').textContent = data.power_usage === 'N/A' ? 'N/A' : `${data.power_usage}%`;
+            document.getElementById('info-memory-total').textContent = formatBytes(data.memory_total);
+            document.getElementById('info-disk-total').textContent = formatBytes(data.disk_total);
+            document.getElementById('memory-total').textContent = `Total memory ${formatBytes(data.memory_total)}`;
+            document.getElementById('disk-total').textContent = `Total disk ${formatBytes(data.disk_total)}`;
+        }
+
+        function updateNetworkTraffic(sentPerSec, recvPerSec) {
+            const timeLabel = new Date().toLocaleTimeString();
+            const sentKB = (sentPerSec || 0) / 1024;
+            const recvKB = (recvPerSec || 0) / 1024;
+
+            networkTrafficChart.data.labels.push(timeLabel);
+            networkTrafficChart.data.datasets[0].data.push(parseFloat(sentKB.toFixed(2)));
+            networkTrafficChart.data.datasets[1].data.push(parseFloat(recvKB.toFixed(2)));
+            if (networkTrafficChart.data.labels.length > 15) networkTrafficChart.data.labels.shift();
+            if (networkTrafficChart.data.datasets[0].data.length > 15) networkTrafficChart.data.datasets[0].data.shift();
+            if (networkTrafficChart.data.datasets[1].data.length > 15) networkTrafficChart.data.datasets[1].data.shift();
+            networkTrafficChart.update('none');
+
+            document.getElementById('net-sent-label').textContent = `↑ ${formatRate(sentPerSec || 0)}`;
+            document.getElementById('net-recv-label').textContent = `↓ ${formatRate(recvPerSec || 0)}`;
+        }
+
+        function appendChatMessage(role, message) {
+            const chatBox = document.getElementById('chat-box');
+            const wrapper = document.createElement('div');
+            wrapper.className = `chat-message ${role === 'user' ? 'user' : ''} rounded-2xl px-4 py-3 text-sm text-slate-200`;
+            wrapper.innerHTML = `<div class="mb-1 text-xs uppercase tracking-[0.2em] text-slate-400">${role}</div><div>${message}</div>`;
+            chatBox.appendChild(wrapper);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function setChatStatus(text, className) {
+            chatStatus.textContent = text;
+            chatStatus.className = className;
+        }
+
+        function createNetworkRow(entry) {
+            const isBlacklisted = (entry.blacklisted || '').toLowerCase() === 'yes';
+            const severity = entry.severity || 'info';
+            return `<tr class="align-top"><td class="px-4 py-3 mono text-cyan-200">${entry.ip || '--'}</td><td class="px-4 py-3 text-slate-300">${entry.country || '--'}</td><td class="px-4 py-3 text-slate-400">${entry.summary || '--'}</td><td class="px-4 py-3"><span class="rounded-full px-3 py-1 text-xs ${isBlacklisted ? 'bg-rose-400/15 text-rose-300' : 'bg-emerald-400/15 text-emerald-300'}">${entry.blacklisted || 'No'}</span></td><td class="px-4 py-3 mono text-slate-200">${entry.attacks || 0}</td><td class="px-4 py-3"><span class="rounded-full px-3 py-1 text-xs ${severityBadge(severity)}">${titleCase(severity)}</span></td></tr>`;
+        }
+
+        function createLogRow(log) {
+            const severity = log.severity || 'info';
+            return `<tr class="align-top"><td class="px-4 py-3 mono text-cyan-200">${log.timestamp || '--'}</td><td class="px-4 py-3 text-slate-300">${log.log || '--'}</td><td class="px-4 py-3"><span class="rounded-full px-3 py-1 text-xs ${severityBadge(severity)}">${titleCase(severity)}</span></td></tr>`;
+        }
+
+        async function fetchNetworkRequests(page = 1) {
+            try {
+                const response = await fetch(`/network-requests${buildQueryString({
+                    page,
+                    query: document.getElementById('network-query').value.trim(),
+                    blacklisted: document.getElementById('network-blacklisted').value,
+                    severity: document.getElementById('network-severity').value
+                })}`);
+                const data = await response.json();
+                const list = document.getElementById('network-requests');
+                list.innerHTML = Array.isArray(data) && data.length ? data.map(createNetworkRow).join('') : `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">No network activity on this page.</td></tr>`;
+                document.getElementById('packet-stat').textContent = Array.isArray(data) ? data.length : 0;
+                document.getElementById('network-page-label').textContent = page;
+            } catch (error) {
+                console.error('Error fetching network requests:', error);
+            }
+        }
+
+        async function fetchLogs(page = 1) {
+            try {
+                const response = await fetch(`/logs${buildQueryString({
+                    page,
+                    query: document.getElementById('logs-query').value.trim(),
+                    severity: document.getElementById('logs-severity').value
+                })}`);
+                const data = await response.json();
+                const list = document.getElementById('log-list');
+                list.innerHTML = Array.isArray(data) && data.length ? data.map(createLogRow).join('') : `<tr><td colspan="3" class="px-4 py-6 text-center text-slate-500">No logs found on this page.</td></tr>`;
+                const count = Array.isArray(data) ? data.length : 0;
+                document.getElementById('log-stat').textContent = `${count} logs loaded`;
+                document.getElementById('logs-page-label').textContent = page;
+            } catch (error) {
+                console.error('Error fetching logs:', error);
+            }
+        }
+
+        async function fetchSystemInfo() {
+            try {
+                const response = await fetch('/system-info');
+                const data = await response.json();
+                if (!data.error) updateSystemInfo(data);
+            } catch (error) {
+                console.error('Error fetching system information:', error);
+            }
+        }
+
+        async function fetchServerMetrics() {
+            try {
+                const response = await fetch('/server-status');
+                const data = await response.json();
+                updateCharts(data.cpu_usage, data.memory_usage, data.disk_usage);
+                renderAlertSummary(data.alerts);
+            } catch (error) {
+                console.error('Error fetching server metrics:', error);
+            }
+        }
+
+        async function fetchAlertSummary() {
+            try {
+                const response = await fetch('/alert-summary');
+                const data = await response.json();
+                renderAlertSummary(data);
+            } catch (error) {
+                console.error('Error fetching alert summary:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message) return;
+            appendChatMessage('user', message);
+            chatInput.value = '';
+            chatInput.disabled = true;
+            chatSendButton.disabled = true;
+            chatSendButton.textContent = 'Sending...';
+            setChatStatus('Thinking', 'rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs text-amber-200');
+            try {
+                const response = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
+                const data = await response.json();
+                appendChatMessage('ai', data.response || 'No response received.');
+                const source = data.source ? `Answered via ${data.source}` : 'Answered';
+                setChatStatus(source, 'rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200');
+            } catch (error) {
+                console.error('Error with AI request:', error);
+                appendChatMessage('ai', 'The operator could not respond right now.');
+                setChatStatus('Chat unavailable', 'rounded-full border border-rose-400/20 bg-rose-400/10 px-3 py-1 text-xs text-rose-200');
+            } finally {
+                chatInput.disabled = false;
+                chatSendButton.disabled = false;
+                chatSendButton.textContent = 'Send';
+                chatInput.focus();
+            }
+        }
+
+        socket.on('connect', () => {
+            document.getElementById('socket-status-text').innerHTML = '<span id="socket-status-dot" class="status-dot pulse mr-2 bg-emerald-400"></span>Live stream connected';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('socket-status-text').innerHTML = '<span id="socket-status-dot" class="status-dot mr-2 bg-rose-400"></span>Live stream disconnected';
+        });
+
+        socket.on('update_metrics', (data) => {
+            updateCharts(data.cpu_usage, data.memory_usage, data.disk_usage);
+            updateSystemInfo(data);
+            renderAlertSummary(data.alerts);
+            if (data.net_sent_per_sec !== undefined) {
+                updateNetworkTraffic(data.net_sent_per_sec, data.net_recv_per_sec);
+            }
+        });
+
+        socket.on('new_network_request', (request) => {
+            const list = document.getElementById('network-requests');
+            if (list.querySelector('td[colspan="6"]')) list.innerHTML = '';
+            list.innerHTML = createNetworkRow(request) + list.innerHTML;
+        });
+
+        socket.on('new_log', (log) => {
+            const list = document.getElementById('log-list');
+            if (list.querySelector('td[colspan="3"]')) list.innerHTML = '';
+            list.innerHTML = createLogRow(log) + list.innerHTML;
+        });
+
+        socket.on('alert_summary', (summary) => {
+            renderAlertSummary(summary);
+        });
+
+        chatSendButton.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') sendMessage(); });
+        document.getElementById('chat-clear').addEventListener('click', () => {
+            document.getElementById('chat-box').innerHTML = '<div class="chat-message rounded-2xl px-4 py-3 text-sm text-slate-300">AI operator ready. Ask about system load, suspicious activity, or recent telemetry trends.</div>';
+            setChatStatus('Context aware', 'rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs text-cyan-200');
+        });
+        document.querySelectorAll('.chat-prompt').forEach((button) => {
+            button.addEventListener('click', () => {
+                chatInput.value = button.dataset.prompt || '';
+                chatInput.focus();
+            });
+        });
+        document.getElementById('network-prev').addEventListener('click', () => { if (currentNetworkPage > 1) { currentNetworkPage -= 1; fetchNetworkRequests(currentNetworkPage); } });
+        document.getElementById('network-next').addEventListener('click', () => { currentNetworkPage += 1; fetchNetworkRequests(currentNetworkPage); });
+        document.getElementById('logs-prev').addEventListener('click', () => { if (currentLogsPage > 1) { currentLogsPage -= 1; fetchLogs(currentLogsPage); } });
+        document.getElementById('logs-next').addEventListener('click', () => { currentLogsPage += 1; fetchLogs(currentLogsPage); });
+        document.getElementById('network-query').addEventListener('input', () => { currentNetworkPage = 1; fetchNetworkRequests(currentNetworkPage); });
+        document.getElementById('network-blacklisted').addEventListener('change', () => { currentNetworkPage = 1; fetchNetworkRequests(currentNetworkPage); });
+        document.getElementById('network-severity').addEventListener('change', () => { currentNetworkPage = 1; fetchNetworkRequests(currentNetworkPage); });
+        document.getElementById('logs-query').addEventListener('input', () => { currentLogsPage = 1; fetchLogs(currentLogsPage); });
+        document.getElementById('logs-severity').addEventListener('change', () => { currentLogsPage = 1; fetchLogs(currentLogsPage); });
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            const nextTheme = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            setTheme(nextTheme);
+        });
+
+        setTheme(localStorage.getItem('siem-theme') || 'dark');
+        fetchSystemInfo();
+        fetchServerMetrics();
+        fetchAlertSummary();
+        fetchNetworkRequests(currentNetworkPage);
+        fetchLogs(currentLogsPage);
+        setInterval(fetchServerMetrics, 5000);
+        setInterval(() => fetchNetworkRequests(currentNetworkPage), 5000);
+        setInterval(() => fetchLogs(currentLogsPage), 5000);
+        setInterval(fetchSystemInfo, 5000);
+        setInterval(fetchAlertSummary, 10000);
+    </script>
+</body>
+</html>
